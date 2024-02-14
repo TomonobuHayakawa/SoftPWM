@@ -38,10 +38,14 @@
 ||
 */
 
+#include "SoftPWM.h"
+
+#if defined(ARDUINO_ARCH_SPRESENSE)
+#else
 #include <avr/io.h>
 #include <avr/interrupt.h>
-#include "SoftPWM.h"
 #include "SoftPWM_timer.h"
+#endif
 
 #if defined(WIRING)
  #include <Wiring.h>
@@ -77,6 +81,41 @@ typedef struct
 
 softPWMChannel _softpwm_channels[SOFTPWM_MAXCHANNELS];
 
+
+#if defined(ARDUINO_ARCH_SPRESENSE)
+const unsigned int interval = 488; /* 2048Hz */
+
+uint SoftPWM_Timer_Interrupt(void)
+{
+  if(_isr_softcount == 0){
+    for (int i = 0; i < SOFTPWM_MAXCHANNELS; i++){
+      if(_softpwm_channels[i].pin >= 0){
+        if(_softpwm_channels[i].pwmvalue == 0){
+          digitalWrite(_softpwm_channels[i].pin, LOW);
+        }else{
+          digitalWrite(_softpwm_channels[i].pin, HIGH);
+        }
+      }
+    }
+  }
+
+  for (int i = 0; i < SOFTPWM_MAXCHANNELS; i++){
+    if(_softpwm_channels[i].pin >= 0){
+      if(_softpwm_channels[i].pwmvalue/4 == _isr_softcount){
+        digitalWrite(_softpwm_channels[i].pin, LOW);
+      }
+    }
+  }
+
+  if(++_isr_softcount > 64){
+    _isr_softcount = 0;
+  }
+
+  return interval;
+
+}
+
+#else
 
 // Here is the meat and gravy
 #ifdef WIRING
@@ -146,9 +185,10 @@ ISR(SOFTPWM_TIMER_INTERRUPT)
           *_softpwm_channels[i].outport |= _softpwm_channels[i].pinmask;
       }
     }
-  }  
+  }
 }
 
+#endif
 
 
 void SoftPWMBegin(uint8_t defaultPolarity)
@@ -162,6 +202,9 @@ void SoftPWMBegin(uint8_t defaultPolarity)
 
   uint8_t i;
 
+#if defined(ARDUINO_ARCH_SPRESENSE)
+  attachTimerInterrupt(SoftPWM_Timer_Interrupt,interval);
+#else
 #ifdef WIRING
   Timer2.setMode(0b010);  // CTC
   Timer2.setClockSource(CLOCK_PRESCALE_8);
@@ -169,6 +212,7 @@ void SoftPWMBegin(uint8_t defaultPolarity)
   Timer2.attachInterrupt(INTERRUPT_COMPARE_MATCH_A, SoftPWM_Timer_Interrupt);
 #else
   SOFTPWM_TIMER_INIT(SOFTPWM_OCR);
+#endif
 #endif
 
 
@@ -217,8 +261,12 @@ void SoftPWMSet(int8_t pin, uint8_t value, uint8_t hardset)
 
   if (hardset)
   {
+#if defined(ARDUINO_ARCH_SPRESENSE)
+    _isr_softcount = 0;
+#else
     SOFTPWM_TIMER_SET(0);
     _isr_softcount = 0xff;
+#endif
   }
 
   // If the pin isn't already set, add it
